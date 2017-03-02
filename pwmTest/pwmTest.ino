@@ -20,11 +20,11 @@
 
 #define SAMPLE_COUNT_MAX_HALL 20
 
-#define FRICTION   1                  // b
-#define MOMENT     1                  // J
-#define TORQUE     1 //0.2400928          // K = stall torque / stall current
-#define INDUCTANCE 1                  // L
-#define RESISTANCE 1 //2.1                // R (measured across the motor with ohmmeter)
+#define FRICTION   0.11                  // b
+#define MOMENT     0.01                  // J
+#define TORQUE     0.01           // K = stall torque / stall current
+#define INDUCTANCE .5                  // L
+#define RESISTANCE 1                // R (measured across the motor with ohmmeter)
                                       // Voltage Constant = 0.92765 = 4.08v / 0.7Hz (in rad/s)
                                       // Torque = Voltage Constant / 0.011827 
 
@@ -53,12 +53,12 @@ double a10 = (-TORQUE / INDUCTANCE);
 double a11 = (- RESISTANCE / INDUCTANCE);
 
 // state
-double x0 = 1.1;
-double x1 = 0;
+double x0 = 0.3;
+double x1 = 0.5;
 
 // state prediction
-double xP0 = 0;
-double xP1 = 0;
+double xP0 = 0.3;
+double xP1 = 0.5;
 
 // measurement
 double z0 = 0;
@@ -79,22 +79,22 @@ double pP11 = 1;
 // measurement equation matrix
 double h00 = 1;
 double h01 = 0;
-double h10 = 0;
-double h11 = 0;
+//double h10 = 0;
+//double h11 = 0;
 
 // process noise covariance
-double q00 = 0.0001;
+double q00 = 0.1;
 double q01 = 0;
 double q10 = 0;
-double q11 = 0.0001;
+double q11 = 0.1;
 
 // measurement noise covariance
-double r00 = 1;
+double r00 = 0.01672098793;
 double r01 = 0;
 double r10 = 0;
-double r11 = 1;
+double r11 = 1;  // returns NaN if this is 0 because of detHPH div0 error
 
-double voltage;
+double voltage = 0;
 
 void kalman_TimeUpdate (void)
 {
@@ -102,39 +102,122 @@ void kalman_TimeUpdate (void)
   xP0 = a00 * x0 + a01 * x1;
   xP1 = a10 * x0 + a11 * x1 + ( 1 / INDUCTANCE) * voltage;
 
+  printData("x1: ", x1, 2);
 //----------------------------------------------
   // Predict the next error covariance based off of the previous error covariance
 
   // A * P
   double ap00, ap01, ap10, ap11;
   
-  ap00 = a00 * p00 + a01 * p01;
-  ap01 = a00 * p10 + a01 * p11;
-  ap10 = a10 * p00 + a11 * p01;
-  ap11 = a10 * p10 + a11 * p11;
+  ap00 = a00 * p00 + a01 * p10;
+  ap01 = a00 * p01 + a01 * p11;
+  ap10 = a10 * p00 + a11 * p10;
+  ap11 = a10 * p01 + a11 * p11;
 
-  // A^-1
-  double ai00, ai01, ai10, ai11;
-  double detA = a00 * a11 - a01 * a10;
-  
-  ai00 = a11 / detA;
-  ai01 = -a01 / detA;
-  ai10 = -a10 / detA;
-  ai11 = a00 / detA;
+  // (A * P) * A^T
+  pP00 = ap00 * a00 + ap01 * a01;
+  pP01 = ap00 * a10 + ap01 * a11;
+  pP10 = ap10 * a00 + ap11 * a01;
+  pP11 = ap10 * a10 + ap11 * a11;
 
-  // (A * P) * A^-1
-  pP00 = ap00 * ai00 + ap01 * ai01;
-  pP01 = ap00 * ai10 + ap01 * ai11;
-  pP10 = ap10 * ai00 + ap11 * ai01;
-  pP11 = ap10 * ai10 + ap11 * ai11;
+  //printData("pP00: ", pP00, 2);
 
-  // [(A*P)*A^-1] + Q
+  // [(A*P)*A^T] + Q
   pP00 += q00;
   pP01 += q01;
   pP10 += q10;
   pP11 += q11;
 }
 
+void kalman_MeasurementUpdateTest (void)
+{
+  // Compute the Kalman Gain
+
+  // H * P
+  double hp00, hp01, hp10, hp11;
+  
+  hp00 = h00 * pP00 + h01 * pP10;
+  hp01 = h00 * pP01 + h01 * pP11;
+
+  // (H*P) * H^T
+  double hph00, hph01, hph10, hph11;
+  
+  hph00 = hp00 * h00 + hp01 * h01;
+
+  // [(H*P)*H^T] + R
+  hph00 += r00;
+
+  // [[(H*P)*H^T]+R]^-1
+  double hphi00, hphi01, hphi10, hphi11;
+
+  hphi00 = hph00;
+
+  // P * H^T
+  double ph00, ph01, ph10, ph11;
+  
+  ph00 = pP00 * h00 + pP01 * h01;
+  ph10 = pP10 * h00 + pP11 * h01;
+  
+  // (P*H^T) * [[(H*P)*H^T]+R]^-1
+  double k00, k01, k10, k11;
+  
+  k00 = ph00 / hphi00;
+  k10 = ph10 / hphi00;
+
+
+//----------------------------------------------
+
+  // Update the state estimate with measurement
+
+  // (H * x)
+  double hx0, hx1;
+  hx0 = h00 * xP0 + h01 * xP1;
+  //hx1 = h10 * xP0 + h11 * xP1;
+
+  // z - (H*x)
+  double zhx0, zhx1;
+  zhx0 = z0 - hx0;
+  //zhx1 = z1 - hx1;
+
+  // K * [z-(H*x)]
+  double kzhx0, kzhx1;
+  kzhx0 = k00 * zhx0;
+  kzhx1 = k10 * zhx0;
+
+  // x + [K*[z-(H*x)]]
+  x0 = xP0 + kzhx0;
+  x1 = xP1 + kzhx1;
+
+  printData("zhx0: ", zhx0, 2);
+//----------------------------------------------
+
+  // Update the error covariance
+
+  // K * H
+  double kh00, kh01, kh10, kh11;
+  
+  kh00 = k00 * h00;
+  kh01 = k00 * h01;
+  kh10 = k10 * h00;
+  kh11 = k10 * h01;
+
+  // I - (K*H)
+  double ikh00, ikh01, ikh10, ikh11;
+  
+  ikh00 = 1 - kh00;
+  ikh01 = 0 - kh01;
+  ikh10 = 0 - kh10;
+  ikh11 = 1 - kh11;
+
+  // [I-(K*H)] * P
+  p00 = ikh00 * pP00 + ikh01 * pP10;
+  p01 = ikh00 * pP01 + ikh01 * pP11;
+  p10 = ikh10 * pP00 + ikh11 * pP10;
+  p11 = ikh10 * pP01 + ikh11 * pP11; 
+
+}
+
+/*
 void kalman_MeasurementUpdate (void)
 {
   // Compute the Kalman Gain
@@ -146,7 +229,9 @@ void kalman_MeasurementUpdate (void)
   hp01 = h00 * pP10 + h01 * pP11;
   hp10 = h10 * pP00 + h11 * pP01;
   hp11 = h10 * pP10 + h11 * pP11;
-  
+
+  printData("pP00: ", pP00, 2);
+
   // (H*P) * H^T
   double hph00, hph01, hph10, hph11;
   
@@ -161,14 +246,30 @@ void kalman_MeasurementUpdate (void)
   hph10 += r10;
   hph11 += r11;
 
+//  printData("hph00: ", hph00, 2);
+//  printData("hph01: ", hph01, 2);
+//  printData("hph10: ", hph10, 2);
+//  printData("hph11: ", hph11, 2);
+    
   // [[(H*P)*H^T]+R]^-1
   double detHPH = hph00 * hph11 - hph01 * hph10;
   double hphi00, hphi01, hphi10, hphi11;
+
+  printData("detHPH: ", detHPH, 2);
+
+  if(detHPH == 0)
+  {
+    detHPH = 1;
+  }
   
   hphi00 = hph11 / detHPH;
   hphi01 = -hph01 / detHPH;
   hphi10 = -hph10 / detHPH;
   hphi11 = hph00 / detHPH;
+
+  
+  
+  
 
   // P * H^T
   double ph00, ph01, ph10, ph11;
@@ -185,6 +286,8 @@ void kalman_MeasurementUpdate (void)
   k01 = ph00 * hphi10 + ph01 * hphi11;
   k10 = ph10 * hphi00 + ph11 * hphi01;
   k11 = ph10 * hphi10 + ph11 * hphi11;
+
+
 //----------------------------------------------
 
   // Update the state estimate with measurement
@@ -234,6 +337,15 @@ void kalman_MeasurementUpdate (void)
   p11 = ikh10 * pP10 + ikh11 * pP11; 
 }
 
+*/
+
+void printData (String Name, double Data, unsigned char DecimalPlaces)
+{
+  Serial.print(Name);
+  Serial.print(Data, DecimalPlaces);
+  Serial.print("\t");
+}
+
 void setup() 
 {   
   Serial.begin(115200);   // Start serial connection
@@ -257,24 +369,29 @@ void loop()
   if(dataReadyHall)
   { 
     readHallData();
+        
+    z0 = avgFrequency; //* 6.2831853; // hz to rad/s
 
-     
-    z0 = avgFrequency;
-
-    kalman_TimeUpdate();
-    kalman_MeasurementUpdate();
+    if(millis()>5000 && receivedInt != 0)
+    {
+      kalman_TimeUpdate();
+      kalman_MeasurementUpdateTest();
     
-    Serial.print("Frequency: ");
-    Serial.print(avgPeriodHall, 6);
-    Serial.print("\t");
-    Serial.print("Delta Time: ");
-    Serial.println(deltaTimeHall);
+
+    printData("Frequency: ", avgPeriodHall, 4);
+    //printData("RecievedInt: ", receivedInt, 0);
+    printData("x0: ", x0, 2);
+    printData("xP0: ", xP0, 2);
+
+    Serial.println();
+    }
     dataReadyHall = 0;
   }
   
   if(newData)
   {
     Serial.println("Recieved new duty cycle...");
+    voltage = 3 + 3 * ((double)receivedInt/100);
     setPwmDutyCycle(PwmPin1, receivedInt);
     newData = false;
   }
