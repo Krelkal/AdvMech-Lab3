@@ -11,7 +11,13 @@
  * Resources:
  * https://www.pololu.com/product/1444/faqs
  * 
+ * Matlab Commands
+ * delete(instrfindall) = clear all com ports
+ * instrfind = print all com ports
+ * 
  */
+
+#define MATLAB_OUTPUT
 
 #define HallPin1 2
 #define HallPin2 3
@@ -21,10 +27,10 @@
 #define SAMPLE_COUNT_MAX_HALL 20
 
 #define FRICTION   0.11                  // b
-#define MOMENT     0.01                  // J
+#define MOMENT     0.02                  // J
 #define TORQUE     0.01           // K = stall torque / stall current
 #define INDUCTANCE .5                  // L
-#define RESISTANCE 1                // R (measured across the motor with ohmmeter)
+#define RESISTANCE 2.7                // R (measured across the motor with ohmmeter)
                                       // Voltage Constant = 0.92765 = 4.08v / 0.7Hz (in rad/s)
                                       // Torque = Voltage Constant / 0.011827 
 
@@ -38,6 +44,7 @@ double avgPeriodHall =0;
 double avgFrequency;
 unsigned char sampleCountHall = 0;
 volatile long encoderCount =0;
+long printTimeStamp;
 
 
 const byte numChars = 32;
@@ -53,28 +60,35 @@ double a10 = (-TORQUE / INDUCTANCE);
 double a11 = (- RESISTANCE / INDUCTANCE);
 
 // state
-double x0 = 0.3;
-double x1 = 0.5;
+double x0 = 0.2;
+double x1 = 0.3;
 
 // state prediction
-double xP0 = 0.3;
-double xP1 = 0.5;
+double xP0 = 0.2;
+double xP1 = 0.3;
 
 // measurement
 double z0 = 0;
 double z1 = 0;
 
+// process noise covariance
+double q00 = 1;
+double q01 = 0;
+double q10 = 0;
+double q11 = q00;
+
+
 // error covariance
-double p00 = 1;
+double p00 = 10*q00;
 double p01 = 0;
 double p10 = 0;
-double p11 = 1;
+double p11 = 10*q11;
 
 // error covariance prediction
-double pP00 = 1;
+double pP00 = 10*q00;
 double pP01 = 0;
 double pP10 = 0;
-double pP11 = 1;
+double pP11 = 10*q11;
 
 // measurement equation matrix
 double h00 = 1;
@@ -82,14 +96,10 @@ double h01 = 0;
 //double h10 = 0;
 //double h11 = 0;
 
-// process noise covariance
-double q00 = 0.1;
-double q01 = 0;
-double q10 = 0;
-double q11 = 0.1;
+
 
 // measurement noise covariance
-double r00 = 0.01672098793;
+double r00 = 0.02;//0.01672098793;
 double r01 = 0;
 double r10 = 0;
 double r11 = 1;  // returns NaN if this is 0 because of detHPH div0 error
@@ -341,9 +351,11 @@ void kalman_MeasurementUpdate (void)
 
 void printData (String Name, double Data, unsigned char DecimalPlaces)
 {
+#ifndef MATLAB_OUTPUT
   Serial.print(Name);
   Serial.print(Data, DecimalPlaces);
   Serial.print("\t");
+ #endif
 }
 
 void setup() 
@@ -352,7 +364,7 @@ void setup()
 
   pinMode(PwmPin1, OUTPUT);
   pinMode(HallPin1, INPUT);
-  setPwmDutyCycle(PwmPin1, 0);
+  setPwmDutyCycle(PwmPin1, 60);
   pinMode(HallPin2, INPUT);
   attachInterrupt(digitalPinToInterrupt(HallPin1), isr_readPwm, RISING);
 
@@ -372,29 +384,49 @@ void loop()
         
     z0 = avgFrequency; //* 6.2831853; // hz to rad/s
 
-    if(millis()>5000 && receivedInt != 0)
+    //if(millis()>5000 && receivedInt != 0)
     {
       kalman_TimeUpdate();
       kalman_MeasurementUpdateTest();
     
 
-    printData("Frequency: ", avgPeriodHall, 4);
-    //printData("RecievedInt: ", receivedInt, 0);
-    printData("x0: ", x0, 2);
-    printData("xP0: ", xP0, 2);
+      printData("Frequency: ", avgPeriodHall, 4);
+      printData("RecievedInt: ", receivedInt, 0);
+      printData("x0: ", x0, 2);
+      printData("xP0: ", xP0, 2);
 
-    Serial.println();
+      if(micros() - printTimeStamp > 5)
+      {
+        printTimeStamp = micros();
+        Serial.print(x0,6);
+        //Serial.print("/t");
+        Serial.println();
+        Serial.print(avgPeriodHall,6);
+    
+        Serial.println();
+      }
     }
     dataReadyHall = 0;
   }
   
   if(newData)
   {
+  #ifndef MATLAB_OUTPUT
     Serial.println("Recieved new duty cycle...");
-    voltage = 3 + 3 * ((double)receivedInt/100);
+  #else
+    receivedInt = 60;
+  #endif
+  
+    voltage = 2 + 3 * ((double)receivedInt/100);
+    // 60% = 3.85V
+    // 30% = 2.75V
+
+    
     setPwmDutyCycle(PwmPin1, receivedInt);
     newData = false;
   }
+
+  
 }
 
 
@@ -491,12 +523,15 @@ void recvWithEndMarker()
  }
 }
 
-void showNewData() {
+void showNewData() 
+{
+#ifndef MATLAB_OUTPUT
  if (newData == true) 
  {
    Serial.print("Serial Input:  ");
    Serial.println(receivedInt);
    //newData = false;
  }
+#endif
 }
 
